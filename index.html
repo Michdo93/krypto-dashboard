@@ -1,0 +1,262 @@
+<!DOCTYPE html>
+<html lang="de">
+<head>
+<meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Krypto-Dashboard – Live Kurse</title>
+<meta name="description" content="Live Kryptowährungskurse via CoinGecko. Kein API-Key erforderlich.">
+<link rel="stylesheet" href="css/style.css">
+</head>
+<body>
+
+<nav>
+  <div class="nav-inner">
+    <a href="index.html" class="nav-brand">₿ <span>KRYPTO</span>DASHBOARD</a>
+    <button id="nav-toggle" class="nav-toggle" aria-label="Menü"><svg width="22" height="22" viewBox="0 0 22 22" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><line x1="2" y1="6" x2="20" y2="6"/><line x1="2" y1="11" x2="20" y2="11"/><line x1="2" y1="16" x2="20" y2="16"/></svg></button>
+    <ul class="nav-links" id="nav-links">
+      <li><a href="index.html" class="active">Dashboard</a></li>
+      <li><a href="pages/watchlist.html">⭐ Watchlist</a></li>
+      <li><a href="pages/konverter.html">⇄ Konverter</a></li>
+    </ul>
+    <div class="nav-right">
+      <span id="last-update">–</span>
+      <button class="refresh-btn" onclick="loadData()">↺ Aktualisieren</button>
+    </div>
+  </div>
+</nav>
+
+<div class="page-header">
+  <div class="page-header-inner">
+    <h1><em>KRYPTO</em>MARKT</h1>
+    <div class="market-overview" id="market-overview">
+      <div class="market-stat"><div class="lbl">Marktkapitalisierung</div><div class="val" id="mo-cap">–</div></div>
+      <div class="market-stat"><div class="lbl">24h Volumen</div><div class="val" id="mo-vol">–</div></div>
+      <div class="market-stat"><div class="lbl">BTC Dominanz</div><div class="val" id="mo-btc">–</div></div>
+      <div class="market-stat"><div class="lbl">Aktive Coins</div><div class="val" id="mo-coins">–</div></div>
+    </div>
+  </div>
+</div>
+
+<main>
+  <div class="filter-bar">
+    <input type="text" class="search-input" id="search" placeholder="Suche (Name / Symbol)…" oninput="filterCoins()">
+    <button class="filter-btn active" onclick="setFilter('all',this)">Alle</button>
+    <button class="filter-btn" onclick="setFilter('top10',this)">Top 10</button>
+    <button class="filter-btn" onclick="setFilter('gainers',this)">📈 Gewinner</button>
+    <button class="filter-btn" onclick="setFilter('losers',this)">📉 Verlierer</button>
+    <button class="filter-btn" onclick="setFilter('watchlist',this)">⭐ Watchlist</button>
+    <select class="sort-select" id="sort-sel" onchange="sortCoins()">
+      <option value="rank">Rang</option>
+      <option value="price_desc">Preis ↓</option>
+      <option value="change_desc">Change ↓</option>
+      <option value="change_asc">Change ↑</option>
+      <option value="cap_desc">Marktcap ↓</option>
+    </select>
+  </div>
+
+  <div id="loading" class="loading"><div class="spinner"></div><span>Kursdaten werden geladen…</span></div>
+  <div class="crypto-grid" id="grid" style="display:none"></div>
+</main>
+
+<div class="modal-overlay" id="modal" style="display:none" onclick="closeModal(event)">
+  <div class="modal">
+    <button class="modal-close" onclick="document.getElementById('modal').style.display='none'">✕</button>
+    <div id="modal-content"></div>
+  </div>
+</div>
+
+<footer><p>Kursdaten: <a href="https://coingecko.com" target="_blank" rel="noopener">CoinGecko</a> Free API – Kein API-Key – Daten können 1–5 Min. verzögert sein. <a href="https://github.com/Michdo93/krypto-dashboard">GitHub</a></p></footer>
+
+<script>
+// ── State ──
+let allCoins = [];
+let watchlist = JSON.parse(localStorage.getItem('kd-watchlist') || '[]');
+let currentFilter = 'all';
+let currentSort = 'rank';
+
+// ── Formatierung ──
+function fmtCur(n, compact=false) {
+  if (n === null || n === undefined) return '–';
+  if (compact) {
+    if (Math.abs(n) >= 1e12) return (n/1e12).toFixed(2) + ' T$';
+    if (Math.abs(n) >= 1e9)  return (n/1e9).toFixed(2) + ' Mrd$';
+    if (Math.abs(n) >= 1e6)  return (n/1e6).toFixed(2) + ' Mio$';
+  }
+  return new Intl.NumberFormat('de-DE', { style: 'currency', currency: 'USD', maximumSignificantDigits: 6 }).format(n);
+}
+function fmtPct(n) { return n === null ? '–' : (n > 0 ? '+' : '') + n.toFixed(2) + ' %'; }
+function fmtNum(n) { return n === null ? '–' : new Intl.NumberFormat('de-DE').format(Math.round(n)); }
+
+// ── API: Marktdaten ──
+async function loadMarketGlobal() {
+  try {
+    const r = await fetch('https://api.coingecko.com/api/v3/global');
+    const d = (await r.json()).data;
+    document.getElementById('mo-cap').textContent   = fmtCur(d.total_market_cap?.usd, true);
+    document.getElementById('mo-vol').textContent   = fmtCur(d.total_volume?.usd, true);
+    document.getElementById('mo-btc').textContent   = d.market_cap_percentage?.btc?.toFixed(1) + ' %';
+    document.getElementById('mo-coins').textContent = fmtNum(d.active_cryptocurrencies);
+  } catch(e) {}
+}
+
+// ── API: Coin-Liste ──
+async function loadData() {
+  try {
+    document.getElementById('loading').style.display = 'flex';
+    document.getElementById('grid').style.display = 'none';
+
+    const params = new URLSearchParams({
+      vs_currency: 'usd', order: 'market_cap_desc',
+      per_page: 100, page: 1, sparkline: true,
+      price_change_percentage: '24h,7d',
+    });
+    const r = await fetch(`https://api.coingecko.com/api/v3/coins/markets?${params}`);
+    if (!r.ok) throw new Error(`API ${r.status}`);
+    allCoins = await r.json();
+    const now = new Date().toLocaleTimeString('de-DE', { hour: '2-digit', minute: '2-digit' });
+    document.getElementById('last-update').textContent = `Aktualisiert: ${now}`;
+    renderGrid();
+    loadMarketGlobal();
+  } catch(e) {
+    document.getElementById('loading').innerHTML = `<div class="error-box">⚠️ Fehler beim Laden: ${e.message}<br><small>CoinGecko Free API hat ein Rate-Limit (~50 req/min). Bitte kurz warten und erneut versuchen.</small></div>`;
+  }
+}
+
+// ── Render ──
+function renderGrid() {
+  document.getElementById('loading').style.display = 'none';
+  document.getElementById('grid').style.display = 'grid';
+  let coins = filterList();
+  coins = sortList(coins);
+  document.getElementById('grid').innerHTML = coins.map(c => coinCard(c)).join('');
+}
+
+function filterList() {
+  const q = document.getElementById('search').value.toLowerCase();
+  let coins = allCoins;
+  if (q) coins = coins.filter(c => c.name.toLowerCase().includes(q) || c.symbol.toLowerCase().includes(q));
+  if (currentFilter === 'top10')    coins = coins.slice(0, 10);
+  if (currentFilter === 'gainers')  coins = coins.filter(c => (c.price_change_percentage_24h||0) > 0).sort((a,b) => b.price_change_percentage_24h - a.price_change_percentage_24h).slice(0,20);
+  if (currentFilter === 'losers')   coins = coins.filter(c => (c.price_change_percentage_24h||0) < 0).sort((a,b) => a.price_change_percentage_24h - b.price_change_percentage_24h).slice(0,20);
+  if (currentFilter === 'watchlist') coins = coins.filter(c => watchlist.includes(c.id));
+  return coins;
+}
+
+function sortList(coins) {
+  const s = document.getElementById('sort-sel').value;
+  const copy = [...coins];
+  if (s === 'rank')       copy.sort((a,b) => a.market_cap_rank - b.market_cap_rank);
+  if (s === 'price_desc') copy.sort((a,b) => b.current_price - a.current_price);
+  if (s === 'change_desc') copy.sort((a,b) => (b.price_change_percentage_24h||0) - (a.price_change_percentage_24h||0));
+  if (s === 'change_asc') copy.sort((a,b) => (a.price_change_percentage_24h||0) - (b.price_change_percentage_24h||0));
+  if (s === 'cap_desc')   copy.sort((a,b) => b.market_cap - a.market_cap);
+  return copy;
+}
+
+function coinCard(c) {
+  const chg = c.price_change_percentage_24h;
+  const chgCls = chg >= 0 ? 'pos' : 'neg';
+  const inWL = watchlist.includes(c.id);
+  return `
+    <div class="crypto-card${inWL?' watchlist':''}" onclick="openModal('${c.id}')">
+      <div class="crypto-card-header">
+        <img class="coin-icon" src="${c.image}" alt="${c.name}" onerror="this.style.display='none'">
+        <div class="coin-name-wrap">
+          <div class="coin-name">${c.name}</div>
+          <div class="coin-symbol">${c.symbol}</div>
+        </div>
+        <span class="coin-rank">#${c.market_cap_rank||'–'}</span>
+        <button class="watch-btn${inWL?' active':''}" onclick="toggleWL(event,'${c.id}')" title="Watchlist">${inWL?'⭐':'☆'}</button>
+      </div>
+      <div class="coin-price">${fmtCur(c.current_price)}</div>
+      <div class="coin-change ${chgCls}">${fmtPct(chg)} (24h)</div>
+      <div class="coin-stats">
+        <div><div class="coin-stat-lbl">Marktcap</div><div class="coin-stat-val">${fmtCur(c.market_cap,true)}</div></div>
+        <div><div class="coin-stat-lbl">Vol. 24h</div><div class="coin-stat-val">${fmtCur(c.total_volume,true)}</div></div>
+        <div><div class="coin-stat-lbl">7d</div><div class="coin-stat-val ${(c.price_change_percentage_7d_in_currency||0)>=0?'pos':'neg'} coin-change">${fmtPct(c.price_change_percentage_7d_in_currency)}</div></div>
+        <div><div class="coin-stat-lbl">ATH</div><div class="coin-stat-val">${fmtCur(c.ath)}</div></div>
+      </div>
+      ${c.sparkline_in_7d?.price ? `<div class="sparkline-wrap"><canvas id="sp-${c.id}" width="240" height="40"></canvas></div>` : ''}
+    </div>`;
+}
+
+// ── Sparklines ──
+function drawSparklines() {
+  allCoins.forEach(c => {
+    const prices = c.sparkline_in_7d?.price;
+    if (!prices || !prices.length) return;
+    const canvas = document.getElementById(`sp-${c.id}`);
+    if (!canvas) return;
+    const ctx = canvas.getContext('2d');
+    const w = canvas.width, h = canvas.height;
+    const min = Math.min(...prices), max = Math.max(...prices);
+    const range = max - min || 1;
+    const up = prices[prices.length-1] >= prices[0];
+    ctx.clearRect(0,0,w,h);
+    ctx.beginPath();
+    prices.forEach((p, i) => {
+      const x = (i / (prices.length-1)) * w;
+      const y = h - ((p - min) / range) * h;
+      i === 0 ? ctx.moveTo(x,y) : ctx.lineTo(x,y);
+    });
+    ctx.strokeStyle = up ? '#00d395' : '#ff4d4d';
+    ctx.lineWidth = 1.5;
+    ctx.stroke();
+  });
+}
+
+// ── Modal ──
+function openModal(id) {
+  const c = allCoins.find(x => x.id === id);
+  if (!c) return;
+  const chg = c.price_change_percentage_24h;
+  document.getElementById('modal-content').innerHTML = `
+    <div style="display:flex;align-items:center;gap:.75rem;margin-bottom:1.25rem">
+      <img src="${c.image}" width="42" height="42" style="border-radius:50%">
+      <div><div style="font-family:'Outfit',sans-serif;font-size:1.4rem;font-weight:800">${c.name}</div>
+      <div style="font-family:var(--mono);font-size:.75rem;color:var(--muted)">${c.symbol.toUpperCase()} · Rang #${c.market_cap_rank}</div></div>
+    </div>
+    <div style="font-family:var(--mono);font-size:2rem;font-weight:700;margin-bottom:.25rem">${fmtCur(c.current_price)}</div>
+    <div class="coin-change ${chg>=0?'pos':'neg'}" style="font-size:.95rem;margin-bottom:1.25rem">${fmtPct(chg)} (24h)</div>
+    <div class="modal-stats">
+      <div class="modal-stat"><div class="lbl">Marktkapitalisierung</div><div class="val">${fmtCur(c.market_cap,true)}</div></div>
+      <div class="modal-stat"><div class="lbl">Vol. 24h</div><div class="val">${fmtCur(c.total_volume,true)}</div></div>
+      <div class="modal-stat"><div class="lbl">Im Umlauf</div><div class="val">${fmtNum(c.circulating_supply)} ${c.symbol.toUpperCase()}</div></div>
+      <div class="modal-stat"><div class="lbl">Max. Angebot</div><div class="val">${c.max_supply?fmtNum(c.max_supply)+' '+c.symbol.toUpperCase():'∞'}</div></div>
+      <div class="modal-stat"><div class="lbl">ATH</div><div class="val">${fmtCur(c.ath)}</div></div>
+      <div class="modal-stat"><div class="lbl">ATL</div><div class="val">${fmtCur(c.atl)}</div></div>
+      <div class="modal-stat"><div class="lbl">7d-Änderung</div><div class="val ${(c.price_change_percentage_7d_in_currency||0)>=0?'pos':'neg'} coin-change">${fmtPct(c.price_change_percentage_7d_in_currency)}</div></div>
+      <div class="modal-stat"><div class="lbl">24h Hoch</div><div class="val">${fmtCur(c.high_24h)}</div></div>
+    </div>`;
+  document.getElementById('modal').style.display = 'flex';
+}
+function closeModal(e) { if (e.target === document.getElementById('modal')) document.getElementById('modal').style.display = 'none'; }
+
+// ── Watchlist ──
+function toggleWL(e, id) {
+  e.stopPropagation();
+  if (watchlist.includes(id)) watchlist = watchlist.filter(x => x !== id);
+  else watchlist.push(id);
+  localStorage.setItem('kd-watchlist', JSON.stringify(watchlist));
+  renderGrid();
+  setTimeout(drawSparklines, 50);
+}
+
+// ── Filter / Sort ──
+function setFilter(f, btn) {
+  currentFilter = f;
+  document.querySelectorAll('.filter-btn').forEach(b => b.classList.remove('active'));
+  btn.classList.add('active');
+  renderGrid();
+  setTimeout(drawSparklines, 50);
+}
+function sortCoins() { currentSort = document.getElementById('sort-sel').value; renderGrid(); setTimeout(drawSparklines, 50); }
+function filterCoins() { renderGrid(); setTimeout(drawSparklines, 50); }
+
+// ── Nav toggle ──
+(function(){ const t=document.getElementById('nav-toggle'),l=document.getElementById('nav-links'); if(t&&l){t.addEventListener('click',()=>l.classList.toggle('open')); l.querySelectorAll('a').forEach(a=>a.addEventListener('click',()=>l.classList.remove('open'))); } })();
+
+// ── Init ──
+loadData();
+setInterval(loadData, 60000); // auto-refresh every minute
+</script>
+</body></html>

@@ -1,0 +1,63 @@
+<!DOCTYPE html>
+<html lang="de">
+<head>
+<meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Watchlist – KryptoDashboard</title>
+<link rel="stylesheet" href="../css/style.css">
+</head>
+<body>
+<nav><div class="nav-inner">
+  <a href="../index.html" class="nav-brand">₿ <span>KRYPTO</span>DASHBOARD</a>
+  <button id="nav-toggle" class="nav-toggle" aria-label="Menü"><svg width="22" height="22" viewBox="0 0 22 22" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><line x1="2" y1="6" x2="20" y2="6"/><line x1="2" y1="11" x2="20" y2="11"/><line x1="2" y1="16" x2="20" y2="16"/></svg></button>
+  <ul class="nav-links" id="nav-links">
+    <li><a href="../index.html">Dashboard</a></li>
+    <li><a href="watchlist.html" class="active">⭐ Watchlist</a></li>
+    <li><a href="konverter.html">⇄ Konverter</a></li>
+  </ul>
+</div></nav>
+<div class="page-header"><div class="page-header-inner"><h1>⭐ <em>WATCH</em>LIST</h1></div></div>
+<main>
+  <div id="loading" class="loading"><div class="spinner"></div><span>Lade Watchlist…</span></div>
+  <div id="empty" style="display:none;text-align:center;padding:4rem;color:var(--muted)">
+    <div style="font-size:3rem;margin-bottom:1rem">☆</div>
+    <div>Noch keine Coins auf der Watchlist.</div>
+    <div style="margin-top:.5rem;font-size:.85rem">Im Dashboard auf ☆ klicken, um Coins hinzuzufügen.</div>
+    <a href="../index.html" style="display:inline-block;margin-top:1rem;background:var(--orange);color:var(--bg);padding:.5rem 1.5rem;border-radius:8px;text-decoration:none;font-weight:700;font-size:.85rem">Zum Dashboard</a>
+  </div>
+  <div class="crypto-grid" id="grid" style="display:none"></div>
+</main>
+<footer><p>Kursdaten: <a href="https://coingecko.com" target="_blank">CoinGecko</a> Free API – <a href="../index.html">Dashboard</a></p></footer>
+<script>
+let watchlist = JSON.parse(localStorage.getItem('kd-watchlist') || '[]');
+function fmtCur(n,c=false){if(!n&&n!==0)return'–';if(c){if(Math.abs(n)>=1e9)return(n/1e9).toFixed(2)+' Mrd$';if(Math.abs(n)>=1e6)return(n/1e6).toFixed(2)+' Mio$';}return new Intl.NumberFormat('de-DE',{style:'currency',currency:'USD',maximumSignificantDigits:6}).format(n);}
+function fmtPct(n){return n===null?'–':(n>0?'+':'')+n.toFixed(2)+' %';}
+async function load(){
+  if(!watchlist.length){document.getElementById('loading').style.display='none';document.getElementById('empty').style.display='block';return;}
+  const ids=watchlist.join(',');
+  const r=await fetch(`https://api.coingecko.com/api/v3/coins/markets?vs_currency=usd&ids=${ids}&sparkline=false&price_change_percentage=24h`);
+  const coins=await r.json();
+  document.getElementById('loading').style.display='none';
+  document.getElementById('grid').style.display='grid';
+  document.getElementById('grid').innerHTML=coins.map(c=>{
+    const chg=c.price_change_percentage_24h;
+    return `<div class="crypto-card watchlist">
+      <div class="crypto-card-header">
+        <img class="coin-icon" src="${c.image}" alt="${c.name}" onerror="this.style.display='none'">
+        <div class="coin-name-wrap"><div class="coin-name">${c.name}</div><div class="coin-symbol">${c.symbol}</div></div>
+        <span class="coin-rank">#${c.market_cap_rank}</span>
+        <button class="watch-btn active" onclick="remove('${c.id}')" title="Entfernen">⭐</button>
+      </div>
+      <div class="coin-price">${fmtCur(c.current_price)}</div>
+      <div class="coin-change ${(chg||0)>=0?'pos':'neg'}">${fmtPct(chg)} (24h)</div>
+      <div class="coin-stats">
+        <div><div class="coin-stat-lbl">Marktcap</div><div class="coin-stat-val">${fmtCur(c.market_cap,true)}</div></div>
+        <div><div class="coin-stat-lbl">24h Hoch</div><div class="coin-stat-val">${fmtCur(c.high_24h)}</div></div>
+      </div>
+    </div>`;
+  }).join('');
+}
+function remove(id){watchlist=watchlist.filter(x=>x!==id);localStorage.setItem('kd-watchlist',JSON.stringify(watchlist));location.reload();}
+(function(){const t=document.getElementById('nav-toggle'),l=document.getElementById('nav-links');if(t&&l){t.addEventListener('click',()=>l.classList.toggle('open'));}})();
+load();
+</script>
+</body></html>
